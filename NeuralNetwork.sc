@@ -83,7 +83,7 @@ NeuralNetworkLayer {
 	}
 }
 
-NeuralNetworkM {
+NeuralNetwork {
 	var inputSize, layers, <learningRate;
 
 	*new {

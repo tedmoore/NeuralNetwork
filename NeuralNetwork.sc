@@ -151,7 +151,7 @@ NeuralNetwork {
 				err = err + this.train1(trainingPair[0],trainingPair[1]);
 			});
 			"epoch: %".format(epoch).postln;
-			"error: %\n".format(err).postln;
+			"loss: %\n".format(err).postln;
 		});
 	}
 

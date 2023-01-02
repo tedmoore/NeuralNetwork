@@ -1,173 +1,236 @@
-NeuralNetworkLayer {
-	classvar econst = 2.71828;
-	var parent, <size, <weights, biases, <>values, activation, previousLayer, <>error;
-
-	*new {
-		arg parent, size, previousLayer, activation = "relu";
-		^super.new.init(parent, size, previousLayer, activation);
-	}
-
-	init {
-		arg parent_, size_, previousLayer_, activation_ = "relu";
-		parent = parent_;
-		size = size_;
-		activation = activation_;
-		previousLayer = previousLayer_;
-
-		values = Matrix.fill(size,1,{0});
-
-		if(previousLayer.notNil,{
-			// this is not the input layer
-			weights = Matrix.fill(size,previousLayer.size,{1.0.rand});
-			biases = Matrix.fill(size,1,{0.5.rand2});
-		});
-	}
-
-	feedForward {
-		values = ((weights * previousLayer.values) + biases).collect({
-			arg val;
-			this.activationFunc(val);
-		});
-		^values;
-	}
-
-	activationFunc {
-		arg val;
-		activation.switch(
-			"relu",{
-				//"relu val: %".format(val).postln;
-				^max(0,val);
-			},
-			"sigmoid",{
-				^(1+econst.pow(val * -1)).reciprocal;
-			},
-			"linear",{
-				^val;
-			},
-			"tanh",{
-				^tanh(val);
-			}
-		);
-	}
-
-	// https://towardsdatascience.com/activation-functions-neural-networks-1cbd9f8d91d6
-	derivativeActivationFunc {
-		arg val;
-		activation.switch(
-			"relu",{
-				var return;
-				//"d relu val: %".format(val).postln;
-				if(val < 0,{return = 0.0},{return = 1.0});
-				^return;
-			},
-			"sigmoid",{
-				^(val * (1 - val));
-			},
-			"linear",{
-				^1.0;
-			},
-			"tanh",{
-				^(1-val.pow(2))
-			}
-		);
-	}
-
-	backProp {
-		var gradient = values.collect({
-			arg val, row, col;
-			this.derivativeActivationFunc(val) * error.at(row,col) * parent.learningRate;
-		});
-
-		weights = weights + (gradient * previousLayer.values.flop);
-		biases = biases + gradient;
-	}
-}
-
 NeuralNetwork {
-	var inputSize, layers, <learningRate;
+	classvar activation_functions, derivative_activation_functions, activation_name2i, activation_i2name;
+	classvar e = 2.71828;
+	var <>net, activation_i;
+
+	*initClass {
+		activation_i2name = [
+			'identity',
+			'sigmoid',
+			'relu',
+			'tanh'
+		];
+		activation_name2i = IdentityDictionary.new;
+		activation_i2name.do{
+			arg name, i;
+			activation_name2i[name] = i;
+		};
+
+		activation_functions = [
+			{arg val; val}, // identity
+			{arg val; (1+e.pow(val * -1)).reciprocal}, // sigmoid
+			{arg val; max(0,val)}, // relu
+			{arg val; tanh(val)} // tanh
+		];
+
+		derivative_activation_functions = [
+			{arg val; 1.0}, // identity
+			{arg val; val * (1 - val)}, // sigmoid
+			{arg val; (val < 0).not.asInteger}, // relu
+			{arg val; 1-val.pow(2)} // tanh
+		];
+	}
 
 	*new {
-		arg inputSize, learningRate = 0.1;
-		^super.new.init(inputSize,learningRate);
+		arg shape,activation = 'sigmoid';
+		^super.new.init(shape,activation);
+	}
+
+	save {
+		arg path;
+		var save = ();
+		save.net = net;
+		save.activation_i = activation_i;
+		save.writeArchive(path);
+	}
+
+	*load {
+		arg path;
+		var save, newNet;
+		save = Object.readArchive(path);
+		newNet = super.new.init(shape:nil,activation:activation_i2name[save.activation_i]);
+		newNet.net = save.net;
+		^newNet;
 	}
 
 	init {
-		arg inputSize_, learningRate_ = 0.1;
-		inputSize = inputSize_;
-		learningRate = learningRate_;
+		arg shape, activation = 'sigmoid';
+		activation_i = activation_name2i[activation];
 
-		layers = List.new;
-		layers.add(NeuralNetworkLayer(this,inputSize));
+		net = shape.collect({
+			arg nNeurons, i;
+			var data = (
+				vals:Array.fill(nNeurons,{0}),
+			);
+			if(i > 0,{
+				// not input layer;
+				data.biases = Array.fill(nNeurons,{rrand(-1.0,1.0)});
+				data.weights = Array.fill(shape[i],{
+					Array.fill(shape[i-1],{rrand(-1.0,1.0)});
+				});
+			});
+			data;
+		});
 	}
 
-	addLayer {
-		arg size, activation;
-		layers.add(NeuralNetworkLayer(this,size,layers.last,activation));
-	}
+	feedforward {
+		arg input;
 
-	feedForward {
-		arg in;
-		var out;
-		layers[0].values_(Matrix.withFlatArray(in.size,1,in));
+		net[0].vals = input;
 
-		layers[1..].do({
+		(1..(net.size-1)).do({
 			arg layer;
-			out = layer.feedForward;
+			net[layer].vals.size.do({
+				arg i;
+				// multiply the previous layer values by the weights;
+				net[layer].vals[i] = (net[layer-1].vals * net[layer].weights[i]).sum;
+			});
+
+			// add the bias
+			net[layer].vals = net[layer].vals + net[layer].biases;
+			// run activation
+			net[layer].vals = net[layer].vals.collect({
+				arg val;
+				activation_functions[activation_i].(val);
+			});
 		});
 
-		^out;
+		^net.last.vals;
 	}
 
 	train1 {
-		arg inputs, targets;
-		var return_e;
-		targets = Matrix.withFlatArray(targets.size,1,targets);
+		arg inputs,targets,learnRate;
 
-		// calc errors
-		layers.last.error = targets - this.feedForward(inputs);
-		((layers.size-2)..1).do({
-			arg layerI;
-			var layer = layers[layerI];
-			layer.error = layers[layerI + 1].weights.flop * layers[layerI + 1].error;
-		});
+		if(((inputs.size != net[0].vals.size) || (targets.size != net.last.vals.size)).not,{
+			// find all the errors
+			net.last.errors = targets - this.feedforward(inputs);
+			//"last layer errors: %".format(net.last.errors).postln;
 
-		// back prop
-		((layers.size-1)..1).do({
-			arg layerI;
-			layers[layerI].backProp;
+			if(net.size > 2,{
+				((net.size-2)..1).do({
+					arg layer;
+					//"layer: %".format(layer).postln;
+					net[layer].errors = Array.fill(net[layer].vals.size,{0});
+					//"errors: %".format(net[layer].errors).postln;
+
+					net[layer].vals.size.do({
+						arg neuron;
+						var error;
+						error = 0;
+						net[layer+1].errors.do({
+							arg nextLayerErr, i;
+							error = error + (nextLayerErr * net[layer+1].weights[i][neuron]);
+						});
+						net[layer].errors[neuron] = error;
+						//"neuron: %    error: %".format(neuron,error).postln;
+					});
+				});
+			});
+
+			// do gradient descent
+			((net.size-1)..1).do({
+				arg layer;
+				//"layer: %".format(layer).postln;
+
+				net[layer].vals.size.do({
+					arg neuron;
+
+					net[layer-1].vals.size.do({
+						arg i;
+						var deltaWeight = learnRate * net[layer].errors[neuron] * derivative_activation_functions[activation_i].(net[layer].vals[neuron]);
+
+						net[layer].biases[neuron] = net[layer].biases[neuron] + deltaWeight;
+
+						deltaWeight = deltaWeight * net[layer-1].vals[i];
+						net[layer].weights[neuron][i] = net[layer].weights[neuron][i] + deltaWeight;
+					});
+				});
+			});
+
+			^net.last.vals;
+		},{
+			"input vector size: %\nNN input vector expects: %\ntarget vector size: %\nNN target vector expects: %".format(
+				inputs.size,
+				net[0].vals.size,
+				targets.size,
+				net.last.vals.size
+			).postln;
+
+			inputs.postln;
+			net[0].postln;
+			Error("input vector or target vector are wrong size").throw;
 		});
-		return_e = layers.last.error.flatten;
-		//return_e.postln;
-		^(return_e.pow(2).sum / return_e.size);
 	}
 
 	train {
-		arg trainingData, nEpochs;
-		nEpochs.do({
-			arg epoch;
-			var err = 0;
-			trainingData.scramble.do({
-				arg trainingPair;
-				err = err + this.train1(trainingPair[0],trainingPair[1]);
+		arg trainingData, learnRate = 0.01, epochs = 100;
+		var i = 0, avgError = inf;
+
+		while({
+			i < epochs;
+		},{
+			var totalError = 0;
+			avgError = 0;
+			//"a".postln;
+			trainingData = trainingData.scramble;
+
+			//trainingData.postln;
+
+			trainingData.do({
+				arg trainingExample;
+				var inputVector, targetVector, output;
+				inputVector = trainingExample[0];
+				targetVector = trainingExample[1];
+
+				//"input vector : %".format(inputVector).postln;
+				//"target vector: %".format(targetVector).postln;
+
+				output = this.train1(inputVector,targetVector,learnRate);
+				totalError = totalError + (output-targetVector).squared.sum;
 			});
-			"epoch: %".format(epoch).postln;
-			"loss: %\n".format(err).postln;
+
+			avgError = totalError / trainingData.size;
+
+			i = i + 1;
+
+			"epoch: %    avg error: %".format(i.asStringff(6),avgError).postln;
 		});
 	}
 
-	trainAndTest {
-		arg trainingData, trainPercent;
-		var trainingN = (trainingData.size * trainPercent).floor.asInteger;
-		var trainingSet = trainingData[0..(trainingN-1)];
-		var testingSet = trainingData[trainingN..];
-		var nCorrect = 0;
-		this.train(trainingSet);
-		testingSet.do({
-			arg testingPair;
-			if(this.feedForward(testingPair[0]).maxIndex == testingPair[1].maxIndex,{
-				nCorrect = nCorrect + 1;
-			});
-		});
-		^(nCorrect / testingSet.size);
+
+	/*	getWeightsAt {
+	arg layer;
+	if((layer == 0) || (layer > (net.size-1)),{
+	Error("The layer provided (%) doesn't exist or doesn't have weights".format(layer)).throw;
+	},{
+	^net[layer].weights
+	});
 	}
+
+	setWeightsAt {
+	arg layer, weights;
+	if((layer == 0) || (layer > (net.size-1)),{
+	Error("The layer provided (%) doesn't exist or doesn't have weights".format(layer)).throw;
+	},{
+	if(net[layer].weights.size != weights.size,{
+	Error("Provided weights has wrong number of neurons.\nExpected: %\nReceived: %\n\n".format(
+	net[layer].weights.size,
+	weights.size
+	)).throw;
+	},{
+	var nWeights = net[layer].weights[0].size;
+	weights.do({
+	arg connections, i;
+	if(connections.size != nWeights,{
+	Error("A provided neuron (%) has wrong number of weights.\nExpected: %\nReceived: %\n\n".format(
+	i,
+	nWeights,
+	connections.size
+	)).throw;
+	});
+	});
+	net[layer].weights = weights;
+	});
+	});
+	}*/
 }

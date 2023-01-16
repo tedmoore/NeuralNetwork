@@ -1,9 +1,10 @@
 NeuralNetwork {
-	classvar activation_functions, derivative_activation_functions, activation_name2i, activation_i2name;
+	classvar activation_functions, derivative_activation_functions, activation_name2i;
 	classvar e = 2.71828;
 	var <>net, activation_i;
 
 	*initClass {
+		var activation_i2name;
 		activation_i2name = [
 			'identity',
 			'sigmoid',
@@ -36,21 +37,27 @@ NeuralNetwork {
 		^super.new.init(shape,activation);
 	}
 
-	save {
-		arg path;
-		var save = ();
-		save.net = net;
-		save.activation_i = activation_i;
-		save.writeArchive(path);
+	dump {
+		var save = IdentityDictionary.new;
+		save[\net] = net;
+		save[\activation_i] = activation_i;
+		^save;
 	}
 
-	*load {
+	load {
+		arg dict;
+		activation_i = dict[\activation_i];
+		net = dict[\net];
+	}
+
+	write {
 		arg path;
-		var save, newNet;
-		save = Object.readArchive(path);
-		newNet = super.new.init(shape:nil,activation:activation_i2name[save.activation_i]);
-		newNet.net = save.net;
-		^newNet;
+		this.dump.writeArchive(path);
+	}
+
+	*read {
+		arg path;
+		^super.new.init.load(Object.readArchive(path));
 	}
 
 	init {
@@ -71,6 +78,8 @@ NeuralNetwork {
 			});
 			data;
 		});
+
+		^this;
 	}
 
 	feedforward {
@@ -196,41 +205,4 @@ NeuralNetwork {
 			"epoch: %    avg error: %".format(i.asStringff(6),avgError).postln;
 		});
 	}
-
-
-	/*	getWeightsAt {
-	arg layer;
-	if((layer == 0) || (layer > (net.size-1)),{
-	Error("The layer provided (%) doesn't exist or doesn't have weights".format(layer)).throw;
-	},{
-	^net[layer].weights
-	});
-	}
-
-	setWeightsAt {
-	arg layer, weights;
-	if((layer == 0) || (layer > (net.size-1)),{
-	Error("The layer provided (%) doesn't exist or doesn't have weights".format(layer)).throw;
-	},{
-	if(net[layer].weights.size != weights.size,{
-	Error("Provided weights has wrong number of neurons.\nExpected: %\nReceived: %\n\n".format(
-	net[layer].weights.size,
-	weights.size
-	)).throw;
-	},{
-	var nWeights = net[layer].weights[0].size;
-	weights.do({
-	arg connections, i;
-	if(connections.size != nWeights,{
-	Error("A provided neuron (%) has wrong number of weights.\nExpected: %\nReceived: %\n\n".format(
-	i,
-	nWeights,
-	connections.size
-	)).throw;
-	});
-	});
-	net[layer].weights = weights;
-	});
-	});
-	}*/
 }
